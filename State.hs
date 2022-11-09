@@ -48,7 +48,9 @@ instance Monad (State s) where
   return x = S (x,) -- this tuple section (x,) is equivalent to \y -> (x,y)
 
   (>>=) :: State s a -> (a -> State s b) -> State s b
-  st >>= f = undefined
+  st >>= f = S $ \s -> let (x, s') = runState st s in runState (f x) s'
+
+-- S $ \s -> let (a,s') = runState st s in runState (f a) s'
 
 {-
 We also define instances for `Functor` and `Applicative`:
@@ -67,14 +69,14 @@ returns the final result,
 -}
 
 evalState :: State s a -> s -> a
-evalState = undefined
+evalState st s = fst $ runState st s
 
 {-
 and the second only returns the final state.
 -}
 
 execState :: State s a -> s -> s
-execState = undefined
+execState st s = snd $ runState st s
 
 {-
 Accessing and Modifying State
@@ -112,7 +114,7 @@ a new state *inside* a state monad. The old state is thrown away.
 -}
 
 modify :: (s -> s) -> State s ()
-modify = undefined
+modify sts = S $ \s -> (sts s, ())
 
 {-
 [1]: http://hackage.haskell.org/packages/archive/mtl/latest/doc/html/Control-Monad-State-Lazy.html#g:2

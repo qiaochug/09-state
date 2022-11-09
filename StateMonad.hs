@@ -127,6 +127,9 @@ countI t = aux t 0 -- start with 0
           s'' = aux t2 s' -- each recursive call
        in s''
 
+-- >>> countI tree
+-- 3
+
 {-
 Once you understand the implementation above, test it on the sample tree
 above.
@@ -173,7 +176,11 @@ label1 :: Tree a -> Tree (a, Int)
 label1 t = fst (aux t 0)
   where
     aux :: Tree a -> Store -> (Tree (a, Int), Store)
-    aux = undefined
+    aux (Leaf x) s = (Leaf (x, s), s + 1)
+    aux (Branch t1 t2) s =
+      let (t1', s') = aux t1 s
+          (t2', s'') = aux t2 s'
+       in (Branch t1' t2', s'')
 
 {-
 Once you have completed the implementation, again test it on the sample tree
@@ -181,6 +188,7 @@ above.
 -}
 
 -- >>> label1 tree
+-- Branch (Branch (Leaf ('a',0)) (Leaf ('b',1))) (Leaf ('c',2))
 
 {-
 Your result should be:
@@ -252,11 +260,11 @@ of the types below.
 
 returnST :: a -> ST a
 -- returnST :: a -> Store -> (a, Store)
-returnST = undefined
+returnST x s = (x, s)
 
 bindST :: ST a -> (a -> ST b) -> ST b
 -- bindST :: (Store -> (a,Store)) -> (a -> (Store -> (b, Store))) -> (Store -> (b, Store))
-bindST st f = undefined
+bindST st f = \s -> let (result, store) = st s in f result store
 
 {-
 That is, `returnST` converts a value into a state transformer by simply
@@ -281,10 +289,14 @@ label2 t = fst (aux t 0)
   where
     aux :: Tree a -> ST (Tree (a, Int))
     aux (Leaf x) = \s -> (Leaf (x, s), s + 1)
-    aux (Branch t1 t2) = \s ->
-      let (t1', s') = aux t1 s
-          (t2', s'') = aux t2 s'
-       in (Branch t1' t2', s'')
+    aux (Branch t1 t2) =
+      bindST
+        (aux t1)
+        ( \t1' ->
+            bindST
+              (aux t2)
+              (\t2' -> returnST (Branch t1' t2'))
+        )
 
 {-
 Because the `ST` parameterized type has definitions for return and bind, we should
@@ -375,8 +387,14 @@ straightforward to define our tree labeling function.
 -}
 
 mlabel :: Tree a -> ST2 (Tree (a, Int))
-mlabel (Leaf x) = undefined -- use `getST2` and `putST2` here
-mlabel (Branch t1 t2) = undefined
+mlabel (Leaf x) = do
+  c <- getST2 -- use `getST2` and `putST2` here
+  putST2 (c + 1)
+  return (Leaf (x, c))
+mlabel (Branch t1 t2) = do
+  t1' <- mlabel t1
+  t2' <- mlabel t2
+  return (Branch t1' t2')
 
 {-
 Try to implement `mlabel` both with and without `do`-notation.
@@ -391,14 +409,14 @@ the initial state, and then discarding the final state:
 -}
 
 label :: Tree a -> Tree (a, Int)
-label t = undefined
+label t = fst $ runState (mlabel t) 0
 
 {-
 For example, `label tree` gives our expected result:
 -}
 
 -- >>> label tree
--- Branch (Branch (Leaf ('a', 0)) (Leaf ('b',1))) (Leaf ('c', 2))
+-- Branch (Branch (Leaf ('a',0)) (Leaf ('b',1))) (Leaf ('c',2))
 
 {-
 A Generic State Transformer
@@ -500,7 +518,14 @@ element `k`.
 -}
 
 updFreqM :: Ord a => a -> S.State (MySt a) ()
-updFreqM = undefined
+updFreqM k = do
+  m <- S.get
+  let f = freq m
+  let fk = case Map.lookup k f of
+        Just x -> x + 1
+        Nothing -> 1
+  S.put (m {freq = Map.insert k fk f}) -- create a new record like m, but index as given
+  return ()
 
 {-
 And with these two, we are done
