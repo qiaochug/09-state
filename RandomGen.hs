@@ -13,6 +13,7 @@ module RandomGen where
 -- It also might be tempting to import Test.QuickCheck, but do not import anything
 -- from quickcheck for this exercise.
 import Control.Monad
+import Control.Monad.ST.Safe (stToIO)
 import qualified State as S
 import System.Random (StdGen)
 import qualified System.Random as Random (mkStdGen, randomIO, uniform, uniformR)
@@ -80,10 +81,13 @@ get different numbers from these three calls.
 -}
 
 -- >>> testRandom 1
+-- -8728299723972136512
 
 -- >>> testRandom 2
+-- 7133861895013252414
 
 -- >>> testRandom 3
+-- 5757771102651567923
 
 {-
 But we can also produce several different random `Int`s by using the
@@ -97,13 +101,16 @@ output of one call to `Random.uniform` as the input to the next.
 (int3 :: Int, _) = uniformInt stdgen2
 
 -- >>> int1
+-- -8728299723972136512
 
 -- >>> int2
+-- 1508247628499543321
 {-
 >
 -}
 
 -- >>> int3
+-- 4708425006071971359
 
 {-
 If we'd like to constrain that integer to a specific range `(0, n)`
@@ -121,10 +128,13 @@ testBounded :: Int -> Int
 testBounded = fst . nextBounded 20 . mkStdGen
 
 -- >>> testBounded 1
+-- 8
 
 -- >>> testBounded 2
+-- 14
 
 -- >>> testBounded 3
+-- 3
 
 {-
 QuickCheck is defined by a class of types that can construct random
@@ -169,11 +179,13 @@ the same number in both components.
 -}
 
 -- >>> testArb1 1 :: (Int, Int)
+-- (-8728299723972136512,1508247628499543321)
 {-
 >
 -}
 
 -- >>> testArb1 2 :: (Int, Int)
+-- (7133861895013252414,-3695387158857804490)
 
 {-
 How about for the `Maybe` type? Use the `arb1` instance for the `Bool` type
@@ -183,7 +195,9 @@ should return `Nothing` or `Just a`, where the `a` also comes from `arb1`.
 
 instance (Arb1 a) => Arb1 (Maybe a) where
   arb1 :: StdGen -> (Maybe a, StdGen)
-  arb1 s = undefined
+  arb1 s =
+    let ((b :: Bool, x :: a), stdgen) = arb1 s
+     in if b then (Just x, stdgen) else (Nothing, stdgen)
 
 {-
 And for lists? Give this one a try!  Although we don't have QCs combinators
@@ -193,13 +207,24 @@ is generated so that you get reasonable lists.
 -}
 
 instance Arb1 a => Arb1 [a] where
-  arb1 s = undefined
+  arb1 s = genList n s'
+    where
+      (n :: Int, s') = nextBounded 10 s
+      genList :: Int -> StdGen -> ([a], StdGen)
+      genList 0 st = ([], st)
+      genList num st = (x : xs, st'')
+        where
+          (x :: a, st') = arb1 st
+          (xs, st'') = genList (num - 1) st'
 
 -- >>> testArb1 1 :: [Int]
+-- [1508247628499543321,4708425006071971359,3295616113604390420,-6470300321862196297,-6003996895882091715,-7917407881444911884,8842842793121516433,3609108844626633098]
 
 -- >>> testArb1 2 :: [Int]
+-- [-3695387158857804490,9055518795393354129,6913472612286637009,9000619708019330313]
 
 -- >>> testArb1 3 :: [Int]
+-- [-4340067171599948441,3693384238643783450,3754176236000241207]
 
 {-
 Ouch, there's a lot of state passing going on here.
@@ -254,17 +279,43 @@ What if we want a bounded generator? See if you can define one without using `Ra
 -}
 
 bounded :: Int -> Gen Int
-bounded b = undefined
+bounded b = do
+  s <- S.get
+  let (y :: Int, s') = S.runState arb s
+  S.put s'
+  return (y `mod` b)
 
 {-
 Now define a `sample` function, which generates and prints 10 random values.
 -}
 
-sample :: Show a => Gen a -> IO ()
+sample :: forall a. Show a => Gen a -> IO ()
 sample gen = do
   seed <- (Random.randomIO :: IO Int) -- get a seed from the global random number generator
   -- hidden in the IO monad
-  undefined
+  helper (10 :: Int) (mkStdGen seed)
+  where
+    helper n s =
+      let (x, s') = S.runState gen s
+       in do
+            print x
+            when (n > 0) $ helper (n - 1) s'
+
+-- do
+-- seed <- (Random.randomIO :: IO Int) -- get a seed from the global random number generator
+-- -- hidden in the IO monad
+-- let std = mkStdGen seed
+-- let li = genVal 10 std
+-- print li
+-- return ()
+-- where
+--   genVal :: Int -> StdGen -> [a]
+--   genVal 0 _ = []
+--   genVal n std =
+--     let (y, std') = S.runState gen std
+--      in y : genVal (n - 1) std'
+
+-- >>> sample (bounded 30)
 
 {-
 For example, you should be able to sample using the `bounded` combinator.
@@ -286,7 +337,7 @@ monad help that definition? How does it compare to the version above?
 -}
 
 instance (Arb a, Arb b) => Arb (a, b) where
-  arb = undefined
+  arb = (,) <$> arb <*> arb
 
 {-
 Can we define some standard QuickCheck combinators to help us?
@@ -294,7 +345,9 @@ What about `elements`, useful for the `Bool` instance ?
 -}
 
 elements :: [a] -> Gen a
-elements = undefined
+elements li = do
+  b <- bounded (length li)
+  return (li !! b)
 
 instance Arb Bool where
   arb = elements [False, True]
@@ -304,7 +357,18 @@ or `frequency`, which we can use for the `[a]` instance ?
 -}
 
 frequency :: [(Int, Gen a)] -> Gen a
-frequency = undefined
+frequency tuList = do
+  g <- elements $ flatList tuList
+  x <- g
+  return x
+  where
+    flatList :: [(Int, Gen a)] -> [Gen a]
+    flatList [] = []
+    flatList ((1, g) : xs) = g : flatList xs
+    flatList ((n, g) : xs) = g : flatList ((n - 1, g) : xs)
 
 instance (Arb a) => Arb [a] where
   arb = frequency [(1, return []), (3, (:) <$> arb <*> arb)]
+
+-- >>> S.runState (arb :: Gen [Int]) (mkStdGen 5)
+-- ([-8370396813780961287,8061563397350318355,-455447607843296742,-9076685267553468829],StdGen {unStdGen = SMGen 17136075878723236579 14650455759880598003})

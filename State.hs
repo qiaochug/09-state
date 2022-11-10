@@ -115,7 +115,7 @@ a new state *inside* a state monad. The old state is thrown away.
 -}
 
 modify :: (s -> s) -> State s ()
-modify sts = S $ \s -> (sts s, ())
+modify sts = S $ \s -> ((), sts s)
 
 {-
 [1]: http://hackage.haskell.org/packages/archive/mtl/latest/doc/html/Control-Monad-State-Lazy.html#g:2
